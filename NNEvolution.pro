@@ -16,7 +16,9 @@ SOURCES += main.cpp\
     entity.cpp \
     neuralnetwork.cpp \
     map.cpp \
-    mapviewwidget.cpp
+    mapviewwidget.cpp \
+    nnviewwidget.cpp \
+    entityinfoform.cpp
 
 HEADERS  += mainwindow.h \
     entity.h \
@@ -24,6 +26,9 @@ HEADERS  += mainwindow.h \
     action.h \
     map.h \
     defs.h \
-    mapviewwidget.h
+    mapviewwidget.h \
+    nnviewwidget.h \
+    entityinfoform.h
 
-FORMS    += mainwindow.ui
+FORMS    += mainwindow.ui \
+    entityinfoform.ui

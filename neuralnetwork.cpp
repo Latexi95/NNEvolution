@@ -2,14 +2,28 @@
 #include <random>
 #include <unordered_map>
 #include <cassert>
+#include <algorithm>
 
-std::mt19937 randgen(std::random_device{}());
+std::mt19937 randgen;
 
 
 NeuralNetwork::NeuralNetwork(quint32 inputValCount, quint32 outputValCount) :
-    mOutputValues(outputValCount)
+    mOutputValueCount(outputValCount),
+    mOutputBufferIndex(0)
 {
     mLevels.emplace_back(inputValCount);
+    mLevels.emplace_back(10);
+
+    for (auto &buf : mNeuronBuffers) {
+        buf.resize(std::max(inputValCount, outputValCount));
+    }
+}
+
+NeuralNetwork::NeuralNetwork() :
+    mOutputValueCount(0),
+    mOutputBufferIndex(0)
+{
+
 }
 
 NeuralNetwork::~NeuralNetwork()
@@ -19,61 +33,53 @@ NeuralNetwork::~NeuralNetwork()
 
 void NeuralNetwork::makeDefaultConnection()
 {
-    mLevels[0].mConnections.emplace_back(13, 8, 10);
+    mLevels[0].mConnections.emplace_back(13, 0, 10);
+    mLevels[1].mConnections.emplace_back(0, 8, 1);
 }
 
 const std::vector<NNType> &NeuralNetwork::outputValues() const
 {
-    return mOutputValues;
+    return mNeuronBuffers[mOutputBufferIndex];
 }
 
 
 void NeuralNetwork::setInputValues(const std::vector<NNType> &inputValues)
 {
-    assert(mLevels.front().mNeurons.size() == inputValues.size());
-    auto inputIt = inputValues.begin();
-    for (auto & n : mLevels.front().mNeurons) {
-        n.mValue = *inputIt;
-        ++inputIt;
+    assert(mLevels.front().mNeuronCount == inputValues.size());
+    int i = 0;
+    for (auto input : inputValues) {
+        mNeuronBuffers[!mOutputBufferIndex][i] = input;
+        ++i;
     }
 }
 
 void NeuralNetwork::setInputValue(quint32 index, NNType value)
 {
-    mLevels.front().mNeurons[index].mValue = value;
+    mNeuronBuffers[!mOutputBufferIndex][index] = value;
 }
 
 NNType NeuralNetwork::inputValue(quint32 index) const
 {
-    return mLevels.front().mNeurons[index].mValue;
+    return mNeuronBuffers[!mOutputBufferIndex][index];
 }
 
 void NeuralNetwork::run()
 {
-    clearNeurons();
-
-    auto lastLevelIt = --mLevels.end();
-    for (auto levelIt = mLevels.begin(); levelIt != lastLevelIt;) {
-        auto nextLevelIt = levelIt;
-        ++nextLevelIt;
+    auto lastLevelIt = mLevels.end();
+    for (auto levelIt = mLevels.begin(); levelIt != lastLevelIt; ++levelIt) {
 
         Level &cur = *levelIt;
-        Level &next = *nextLevelIt;
+
+        std::fill(mNeuronBuffers[mOutputBufferIndex].begin(), mNeuronBuffers[mOutputBufferIndex].end(), 0);
 
         for (const NNConnection &con : cur.mConnections) {
-            const NNNeuron &src = cur.mNeurons[con.mSrcNeuronIndex];
-            NNNeuron &dest = next.mNeurons[con.mDestNeuronIndex];
-            dest.mValue += src.mValue * con.mWeight;
+            NNType src = mNeuronBuffers[!mOutputBufferIndex][con.mSrcNeuronIndex];
+            auto &dest = mNeuronBuffers[mOutputBufferIndex][con.mDestNeuronIndex];
+            dest += src * con.mWeight;
         }
-
-        levelIt = nextLevelIt;
+        mOutputBufferIndex = !mOutputBufferIndex;
     }
-
-    Level &lastLevel = *lastLevelIt;
-    for (const NNConnection &con : lastLevel.mConnections) {
-        const NNNeuron &src = lastLevel.mNeurons[con.mSrcNeuronIndex];
-        mOutputValues[con.mDestNeuronIndex] += src.mValue * con.mWeight;
-    }
+    mOutputBufferIndex = !mOutputBufferIndex;
 }
 
 NeuralNetwork NeuralNetwork::clone(bool mutate)
@@ -91,20 +97,35 @@ NeuralNetwork NeuralNetwork::clone(bool mutate)
             Level &level = c.mLevels[std::uniform_int_distribution<>(0, c.mLevels.size() - 1)(randgen)];
             if (level.mConnections.empty()) continue;
             NNConnection &con = level.mConnections[std::uniform_int_distribution<>(0, level.mConnections.size() - 1)(randgen)];
-            con.mWeight += 0.5 - rdist(randgen);
+            con.mWeight += 1.5 - rdist(randgen) * 3;
         }
-        else if (mutType < 0.85) {
+        else if (mutType < 0.80) {
             int levelIndex = std::uniform_int_distribution<>(0, c.mLevels.size() - 1)(randgen);
             Level &level = c.mLevels[levelIndex];
 
-            int sourceCount = level.mNeurons.size();
-            int targetCount = (levelIndex == c.mLevels.size() - 1) ? c.mOutputValues.size() : c.mLevels[levelIndex + 1].mNeurons.size();
+            int sourceCount = level.mNeuronCount;
+            int targetCount = (levelIndex == c.mLevels.size() - 1) ? c.mOutputValueCount : c.mLevels[levelIndex + 1].mNeuronCount;
 
             if (targetCount == 0 || sourceCount == 0) continue;
 
             level.mConnections.emplace_back(std::uniform_int_distribution<>(0, sourceCount - 1)(randgen),
                                        std::uniform_int_distribution<>(0, targetCount - 1)(randgen),
                                        1.5 - 2.0 * rdist(randgen));
+        }
+        else if (mutType < 0.90) {
+            if (c.mLevels.size() == 1) continue;
+            int targetLevelIndex = std::uniform_int_distribution<>(1, c.mLevels.size() - 1)(randgen);
+            int srcLevelIndex = targetLevelIndex - 1;
+            Level &srcLevel = c.mLevels[srcLevelIndex];
+            Level &targetLevel = c.mLevels[targetLevelIndex];
+            int sourceCount = srcLevel.mNeuronCount;
+            if (sourceCount == 0) continue;
+            int targetIndex = targetLevel.mNeuronCount;
+            targetLevel.mNeuronCount++;
+
+            srcLevel.mConnections.emplace_back(std::uniform_int_distribution<>(0, sourceCount - 1)(randgen),
+                               targetIndex,
+                               1.5 - 2.0 * rdist(randgen));
         }
         else if (mutType < 0.95) {
             int levelIndex = std::uniform_int_distribution<>(0, c.mLevels.size() - 1)(randgen);
@@ -126,7 +147,7 @@ NeuralNetwork NeuralNetwork::clone(bool mutate)
                 endPointIt->second = index++;
             }
 
-            newLevel.mNeurons.resize(index);
+            newLevel.mNeuronCount = index;
             newLevel.mConnections.resize(index);
 
             for (auto endPointIt = endPoints.begin();endPointIt != endPoints.end();++endPointIt) {
@@ -142,25 +163,55 @@ NeuralNetwork NeuralNetwork::clone(bool mutate)
         }
     }
 
+    quint32 oc = mOutputValueCount;
+
+    for (const Level &l : mLevels) {
+        oc = std::max(oc, l.mNeuronCount);
+    }
+
+    for (auto &buffer : mNeuronBuffers) {
+        buffer.resize(oc);
+    }
+
     return c;
 }
 
-void NeuralNetwork::clearNeurons()
+const std::vector<Level> &NeuralNetwork::levels() const
 {
-    for (auto levelIt = ++mLevels.begin(); levelIt != mLevels.end(); ++levelIt) {
-        for (auto neuron : levelIt->mNeurons) {
-            neuron.mValue = 0;
+    return mLevels;
+}
+
+void NeuralNetwork::optimize()
+{
+    for (Level &level : mLevels) {
+        std::map<std::pair<int, int>, std::pair<int, NNType>> usageMap;
+
+        bool multipleUsages = false;
+        for (NNConnection &con : level.mConnections) {
+            usageMap[std::pair<int, int>(con.mSrcNeuronIndex, con.mDestNeuronIndex)].second += con.mWeight;
+            if (++usageMap[std::pair<int, int>(con.mSrcNeuronIndex, con.mDestNeuronIndex)].first > 1) {
+                multipleUsages = true;
+            }
         }
-    }
-    for (auto &outputVal : mOutputValues) {
-        outputVal = 0;
+        if (multipleUsages) {
+            level.mConnections.clear();
+            level.mConnections.resize(usageMap.size());
+            int index = 0;
+            for (const std::pair<std::pair<int, int>, std::pair<int, NNType>> &p: usageMap) {
+                const std::pair<int, int> &conPair = p.first;
+                NNConnection &con = level.mConnections[index];
+                con.mSrcNeuronIndex = conPair.first;
+                con.mDestNeuronIndex = conPair.second;
+                con.mWeight = p.second.second;
+            }
+        }
     }
 }
 
 
 
 Level::Level(quint32 neurons) :
-    mNeurons(neurons)
+    mNeuronCount(neurons)
 {
 
 }

@@ -17,6 +17,9 @@ public:
     explicit MainWindow(QWidget *parent = 0);
     ~MainWindow();
 
+public slots:
+    void save();
+    void load();
 private:
     void timerEvent(QTimerEvent *e);
     void tick();

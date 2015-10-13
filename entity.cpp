@@ -9,12 +9,17 @@ Entity::Entity(Map *map) :
     mMap(map),
     mX(0),
     mY(0),
-    mAge(0)
+    mAge(1),
+    mGeneration(0)
 
 {
-    setEnergy(std::uniform_int_distribution<>(100, 150)(randgen));
+    setEnergy(std::uniform_int_distribution<>(50, 100)(randgen));
     setHealth(std::uniform_int_distribution<>(30, 60)(randgen));
     setHydration(std::uniform_int_distribution<>(1000, 2000)(randgen));
+    setValueStore1(0);
+    setValueStore2(0);
+    setValueStore3(0);
+    setValueStore4(0);
 }
 
 void Entity::makeDefaultNeuralNetwork()
@@ -25,14 +30,23 @@ void Entity::makeDefaultNeuralNetwork()
 void Entity::initClone(Entity *entity)
 {
     mNeuralNetwork = entity->mNeuralNetwork.clone(true);
-    setEnergy(std::uniform_int_distribution<>(100, 150)(randgen));
+    setEnergy(std::uniform_int_distribution<>(50, 100)(randgen));
     setHealth(std::uniform_int_distribution<>(30, 60)(randgen));
     setHydration(std::uniform_int_distribution<>(1000, 2000)(randgen));
+    setValueStore1(0);
+    setValueStore2(0);
+    setValueStore3(0);
+    setValueStore4(0);
+    mGeneration = entity->generation() + 1;
 }
 
 
 void Entity::run()
 {
+    if (age() == 1 && generation() > 50 && generation() % 50 == 0) {
+        mNeuralNetwork.optimize();
+    }
+
     setHeatLevel(mMap->cell(mX, mY).mHeatLevel / 255.0);
 
 
@@ -72,6 +86,19 @@ void Entity::run()
     setValueStore3(output[14]);
     setValueStore4(output[15]);
 
+    setActionMoveLeft(moveLeft);
+    setActionMoveRight(moveRight);
+    setActionMoveUp(moveUp);
+    setActionMoveDown(moveDown);
+    setActionAttackLeft(attackLeft);
+    setActionAttackRight(attackRight);
+    setActionAttackUp(attackUp);
+    setActionAttackDown(attackDown);
+    setActionEatV(eatV);
+    setActionEatM(eatM);
+    setActionDrink(drink);
+    setActionSplit(split);
+
     NNType bestVal = 0;
     Action::Type actionType = Action::None;
 #define MAX_ACTION(var, actionEnum) if (var > bestVal) { bestVal = var; actionType = actionEnum; }
@@ -99,13 +126,15 @@ void Entity::run()
 void Entity::postUpdate()
 {
 
-    setHydration(getHydration() - (20 * pow2(getHeatLevel() / 255.0)));
-    if (getHydration() <= 50) {
-        takeEnergy(2.0);
+    setHydration(getHydration() - (20 * getHeatLevel()));
+    if (getHydration() <= 100) {
+        takeEnergy(2.0 * (1.0 + 100.0 / age()));
     }
     else {
-        takeEnergy(1.0);
+        takeEnergy(1.0 * (1.0 + 100.0 / age()));
     }
+
+
     if (getEnergy() <= 0.1) {
         takeHealth(2);
     }
@@ -171,6 +200,78 @@ NNType Entity::takeHealth(NNType e)
 int Entity::age() const
 {
     return mAge;
+}
+
+int Entity::generation() const
+{
+    return mGeneration;
+}
+
+const NeuralNetwork &Entity::neuralNetwork() const
+{
+    return mNeuralNetwork;
+}
+
+void Entity::save(QDataStream &s, int version)
+{
+    s << mNeuralNetwork;
+    s << mX;
+    s << mY;
+    s << mAge;
+    s << mGeneration;
+    s << getHealth();
+    s << getEnergy();
+    s << getHydration();
+    s << getValueStore1();
+    s << getValueStore2();
+    s << getValueStore3();
+    s << getValueStore4();
+
+    s << getActionMoveLeft();
+    s << getActionMoveRight();
+    s << getActionMoveUp();
+    s << getActionMoveDown();
+    s << getActionAttackLeft();
+    s << getActionAttackRight();
+    s << getActionAttackUp();
+    s << getActionAttackDown();
+    s << getActionEatV();
+    s << getActionEatM();
+    s << getActionDrink();
+    s << getActionSplit();
+    s << getActionResult();
+}
+
+void Entity::load(QDataStream &s, int version)
+{
+    s >> mNeuralNetwork;
+    s >> mX;
+    s >> mY;
+    s >> mAge;
+    s >> mGeneration;
+
+    NNType t;
+    s >> t; setHealth(t);
+    s >> t; setEnergy(t);
+    s >> t; setHydration(t);
+    s >> t; setValueStore1(t);
+    s >> t; setValueStore2(t);
+    s >> t; setValueStore3(t);
+    s >> t; setValueStore4(t);
+
+    s >> t; setActionMoveLeft(t);
+    s >> t; setActionMoveRight(t);
+    s >> t; setActionMoveUp(t);
+    s >> t; setActionMoveDown(t);
+    s >> t; setActionAttackLeft(t);
+    s >> t; setActionAttackRight(t);
+    s >> t; setActionAttackUp(t);
+    s >> t; setActionAttackDown(t);
+    s >> t; setActionEatV(t);
+    s >> t; setActionEatM(t);
+    s >> t; setActionDrink(t);
+    s >> t; setActionSplit(t);
+    s >> t; setActionResult(t);
 }
 
 

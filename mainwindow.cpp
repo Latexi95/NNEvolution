@@ -4,6 +4,7 @@
 #include <QtConcurrent/QtConcurrent>
 #include <QImage>
 #include <random>
+#include <QActionGroup>
 
 #define MIN_ENTITY_COUNT 10000
 #define MAX_ENTITY_COUNT 500000
@@ -18,6 +19,28 @@ MainWindow::MainWindow(QWidget *parent) :
     Map *map = new Map(QImage("../NNEvolution/map.png"));
     ui->mapViewWidget->setMap(map);
     mUpdateTimer.start(0, this);
+    ui->actionSave->setEnabled(false);
+    ui->actionLoad->setEnabled(false);
+
+    connect(ui->actionRun, &QAction::toggled, [&](bool run) {
+        if (run) {
+            mUpdateTimer.start(0, this);
+            ui->actionSave->setEnabled(false);
+            ui->actionLoad->setEnabled(false);
+        }
+        else {
+            mUpdateTimer.stop();
+            ui->actionSave->setEnabled(true);
+            ui->actionLoad->setEnabled(true);
+        }
+    });
+
+    connect(ui->actionLoad, &QAction::triggered, this, &MainWindow::load);
+    connect(ui->actionSave, &QAction::triggered, this, &MainWindow::save);
+
+    QActionGroup *viewMode = new QActionGroup(this);
+    viewMode->addAction(ui->actionMost_levels);
+    viewMode->addAction(ui->actionOldest);
 
     std::uniform_int_distribution<> xDist(0, map->width() - 1);
     std::uniform_int_distribution<> yDist(0, map->height() - 1);
@@ -52,6 +75,16 @@ MainWindow::MainWindow(QWidget *parent) :
 MainWindow::~MainWindow()
 {
     delete ui;
+}
+
+void MainWindow::save()
+{
+    ui->mapViewWidget->map()->saveMap("save.dat");
+}
+
+void MainWindow::load()
+{
+    ui->mapViewWidget->map()->loadMap("save.dat", mEntities);
 }
 
 void MainWindow::timerEvent(QTimerEvent *e)
@@ -192,7 +225,7 @@ void MainWindow::tick()
     if (entityCount < MIN_ENTITY_COUNT && cloneBaseEntity) {
         std::uniform_int_distribution<> xDist(0, map->width() - 1);
         std::uniform_int_distribution<> yDist(0, map->height() - 1);
-        for (int i = 0; i < 100; ++i) {
+        for (int i = 0; i < 1000; ++i) {
             mEntities.emplace_back(map);
             Entity &entity = mEntities.back();
             entity.initClone(bestEntity);
@@ -213,7 +246,6 @@ void MainWindow::tick()
 
     auto endTime = std::chrono::high_resolution_clock::now();
 
-    ++mIteration;
     if (ui->actionUpdate_statusbar->isChecked()) {
         ui->statusBar->showMessage(tr("%10 Update time: %1ms  Entity count: %2  Deleted: %3  Oldest: %4  Splits: %5  Eating: %6  Drinking: %7  Attacking: %8 Moving: %9")
                                    .arg(std::chrono::duration<double>(endTime - startTime).count() * 1000.0)
@@ -225,8 +257,23 @@ void MainWindow::tick()
                                    .arg(drinking)
                                    .arg(attacking)
                                    .arg(moving)
-                                   .arg(mIteration)
+                                   .arg(map->iterations())
                                    );
     }
-    if (ui->actionUpdate_screen->isChecked()) ui->mapViewWidget->repaint();
+    if (ui->actionUpdate_screen->isChecked() && bestEntity) {
+        if (ui->actionMost_levels->isChecked()) {
+            int levels = 0;
+            for (Entity &e : mEntities) {
+                if (e.neuralNetwork().levels().size() > levels) {
+                    bestEntity = &e;
+                }
+            }
+        }
+
+        ui->nnViewWidget->setNeuralNetwork(bestEntity->neuralNetwork());
+
+        ui->entityInfoForm->updateInfo(*bestEntity);
+
+        ui->mapViewWidget->update();
+    }
 }

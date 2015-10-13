@@ -2,10 +2,16 @@
 #include <QColor>
 #include <QDebug>
 #include "entity.h"
+#include <random>
+#include <QDateTime>
+#include <QFile>
+#include <QDataStream>
 
+extern std::mt19937 randgen;
 
 Map::Map(const QImage &img)
 {
+    randgen.seed(QDateTime::currentMSecsSinceEpoch());
     mMaxFoodLevel = 0;
     mMaxWaterLevel = 0;
     qDebug() << img;
@@ -25,6 +31,7 @@ Map::Map(const QImage &img)
         }
     }
     mRenderBuffer = QImage(mWidth, mHeight, QImage::Format_RGB32);
+    mIterations = 1;
 }
 
 Cell &Map::cell(int x, int y)
@@ -61,13 +68,14 @@ void Map::generate()
 {
 
     for (Cell &c : mData) {
-        c.mFoodLevelV = (quint16)std::min((c.mFoodLevelV + ((!c.mEntity ? 40 : 0) + c.mFoodVGeneration) / 40.0) * (0.95 + 0.05 * pow2(c.mFoodVGeneration / 255.0)), (double)0xFFFF);
+        c.mFoodLevelV = (quint16)std::min((c.mFoodLevelV + ((!c.mEntity ? 10 : -5) + c.mFoodVGeneration) / 50.0) * (0.95 + 0.05 * c.mFoodVGeneration / 255.0), (double)0xFFFF);
         c.mFoodLevelM = c.mFoodLevelM * (0.95 - 0.3 * pow2(c.mHeatLevel / 255.0));
         c.mWaterLevel = (quint16)std::min(c.mWaterLevel * (0.95 - 0.3 * pow2(c.mHeatLevel / 255.0)) + c.mWaterGeneration, (double)0xFFFF);
 
         mMaxFoodLevel = std::max(mMaxFoodLevel, c.mFoodLevelV);
         mMaxWaterLevel = std::max(mMaxWaterLevel, c.mWaterLevel);
     }
+    ++mIterations;
 }
 
 quint16 Map::maxFoodLevel() const
@@ -78,10 +86,10 @@ quint16 Map::maxFoodLevel() const
 const QImage &Map::render()
 {
     for (int y = 0; y != mHeight; ++y) {
+        QRgb *line = (QRgb*)mRenderBuffer.scanLine(y);
         for (int x = 0; x != mWidth; ++x) {
             const Cell &c = cell(x, y);
-
-            mRenderBuffer.setPixel(x, y, qRgb(c.mEntity ? 255.0 : 0, 255.0 * (c.mFoodLevelV / (double)mMaxFoodLevel), 255.0 * (c.mWaterLevel / (double)mMaxWaterLevel)));
+            line[x] = qRgb(c.mEntity ? 255.0 : 0, 255.0 * (c.mFoodLevelV / (double)mMaxFoodLevel), 255.0 * (c.mWaterLevel / (double)mMaxWaterLevel));
         }
     }
     //qDebug() << mMaxFoodLevel << mMaxWaterLevel;
@@ -134,7 +142,7 @@ NNType Map::eatV(Entity *entity)
 {
     Cell &c = cell(entity->x(), entity->y());
 
-    const int eatAmount = 50;
+    const int eatAmount = 100;
     int eaten = eatAmount;
     if (c.mFoodLevelV > eatAmount) {
         c.mFoodLevelV -= eatAmount;
@@ -144,7 +152,8 @@ NNType Map::eatV(Entity *entity)
         c.mFoodLevelV = 0;
     }
 
-    entity->setEnergy(entity->getEnergy() - 1.0 + 0.5 * eaten);
+    entity->setEnergy(entity->getEnergy() - 2.0 + 0.2 * eaten);
+    entity->setEnergy(std::min(entity->getEnergy(), 400.0));
     return eaten;
 }
 
@@ -162,7 +171,8 @@ NNType Map::eatM(Entity *entity)
         c.mFoodLevelM = 0;
     }
 
-    entity->setEnergy(entity->getEnergy() - 1.0 + 0.5 * eaten);
+    entity->setEnergy(entity->getEnergy() - 2.0 + 0.5 * eaten);
+    entity->setEnergy(std::min(entity->getEnergy(), 400.0));
     return eaten;
 }
 
@@ -183,6 +193,7 @@ NNType Map::drink(Entity *entity)
     entity->takeEnergy(2.0);
 
     entity->setHydration(entity->getHydration() + drank);
+    entity->setHydration(std::min(entity->getHydration(), 4000.0));
     return drank;
 }
 int Map::width() const
@@ -197,6 +208,80 @@ int Map::height() const
 bool Map::pointOnMap(int x, int y) const
 {
     return !(x < 0 || x >= mWidth || y < 0 || y >= mHeight);
+}
+
+bool Map::saveMap(const QString &fileName)
+{
+    QFile file(fileName);
+    if (!file.open(QFile::WriteOnly)) return false;
+
+    QDataStream s(&file);
+    s << 1;
+    s << mWidth;
+    s << mHeight;
+    s << mIterations;
+    for (const Cell &c : mData) {
+        s << c.mFoodLevelV << c.mFoodLevelM;
+        s << c.mFoodVGeneration;
+        s << c.mHeatLevel;
+        s << c.mWaterLevel << c.mWaterGeneration;
+        if (c.mEntity) {
+            int i = 1;
+            s << i;
+
+            c.mEntity->save(s, 1);
+            //Save entity
+        }
+        else {
+            int i = 0;
+            s << i;
+        }
+    }
+
+
+    return true;
+}
+
+bool Map::loadMap(const QString &fileName, std::list<Entity> &entities)
+{
+    QFile file(fileName);
+    if (!file.open(QFile::ReadOnly)) return false;
+
+    entities.clear();
+    QDataStream s(&file);
+    int version;
+    s >> version;
+    s >> mWidth;
+    s >> mHeight;
+    s >> mIterations;
+    mData.resize(mWidth * mHeight);
+    for (auto it = mData.begin(); it != mData.end(); ++it) {
+        Cell &c = *it;
+        s >> c.mFoodLevelV >> c.mFoodLevelM;
+        s >> c.mFoodVGeneration;
+        s >> c.mHeatLevel;
+        s >> c.mWaterLevel >> c.mWaterGeneration;
+        int entityExists = 0;
+        s >> entityExists;
+        if (entityExists) {
+            //Load entity
+            entities.emplace_back(this);
+            Entity &e = entities.back();
+            e.load(s, 1);
+            c.mEntity = &e;
+        }
+        else {
+            c.mEntity = 0;
+        }
+    }
+
+
+    return true;
+}
+
+quint64 Map::iterations() const
+{
+    return mIterations;
 }
 
 

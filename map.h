@@ -49,6 +49,11 @@ public:
 
     bool pointOnMap(int x, int y) const;
 
+    bool saveMap(const QString &fileName);
+    bool loadMap(const QString &fileName, std::list<Entity> &entities);
+
+    quint64 iterations() const;
+
 private:
     Cell mOutsideCell;
     QImage mRenderBuffer;
@@ -56,6 +61,7 @@ private:
     int mWidth, mHeight;
     quint16 mMaxFoodLevel;
     quint16 mMaxWaterLevel;
+    quint64 mIterations;
 };
 
 #endif // MAP_H
